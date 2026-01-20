@@ -458,7 +458,23 @@ function openCorrelationEngine() {
     correlationChartInstance = new Chart(ctx, {
         type: 'scatter',
         data: { datasets: [{ label: 'Global Assets Correlation', data: dataPoints, backgroundColor: 'rgba(0, 243, 255, 0.6)', borderColor: '#00f3ff' }] },
-        options: { scales: { x: { title: { display: true, text: 'GDP Growth (%)' } }, y: { title: { display: true, text: 'Life Expectancy (y)' } } } }
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            return context.raw.label + ': GDP ' + context.raw.x.toFixed(2) + '%, Life ' + context.raw.y.toFixed(1) + 'y';
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { title: { display: true, text: 'GDP Growth (%)', color: '#666' }, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#888' } },
+                y: { title: { display: true, text: 'Life Expectancy (y)', color: '#666' }, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#888' } }
+            }
+        }
     });
 }
 
