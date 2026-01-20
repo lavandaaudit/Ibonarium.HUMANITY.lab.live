@@ -314,7 +314,7 @@ async function openCountryInfo(country) {
         </div>
 
         <div class="control-group-title" style="margin-top:15px;">HISTORICAL ANALYTICS (10Y TREND)</div>
-        <div style="height:100px; background:rgba(0,0,0,0.2); border-radius:4px; margin-top:5px;">
+        <div style="height:130px; background:rgba(0,0,0,0.2); border-radius:4px; margin-top:5px; padding-bottom:5px;">
             <canvas id="historyChart"></canvas>
         </div>
     `;
@@ -329,7 +329,42 @@ async function openCountryInfo(country) {
                 labels: history.labels,
                 datasets: [{ data: history.gdp, borderColor: COLORS.economy, borderWidth: 2, tension: 0.3, fill: false, pointRadius: 0 }]
             },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: false }, scales: { x: { display: true, ticks: { color: '#666', font: { size: 8 } }, grid: { color: 'rgba(255,255,255,0.05)' } }, y: { ticks: { color: '#666', font: { size: 7 } }, grid: { color: 'rgba(255,255,255,0.05)' } } } }
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: false },
+                scales: {
+                    x: {
+                        display: true,
+                        grid: {
+                            display: true,
+                            color: 'rgba(255,255,255,0.08)',
+                            drawBorder: false
+                        },
+                        ticks: {
+                            display: true,
+                            color: '#84a5b8',
+                            font: { size: 9, family: '"JetBrains Mono", monospace' },
+                            maxRotation: 0,
+                            autoSkip: true,
+                            maxTicksLimit: 6
+                        }
+                    },
+                    y: {
+                        display: true,
+                        grid: {
+                            color: 'rgba(255,255,255,0.05)',
+                            drawBorder: false
+                        },
+                        ticks: {
+                            display: true,
+                            color: '#555',
+                            font: { size: 8 }
+                        }
+                    }
+                }
+            }
         });
     }
     triggerMapPulse(country.latlng, 'var(--accent-cyan)');
