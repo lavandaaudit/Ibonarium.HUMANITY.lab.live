@@ -329,7 +329,7 @@ async function openCountryInfo(country) {
                 labels: history.labels,
                 datasets: [{ data: history.gdp, borderColor: COLORS.economy, borderWidth: 2, tension: 0.3, fill: false, pointRadius: 0 }]
             },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: false }, scales: { x: { display: false }, y: { ticks: { color: '#666', font: { size: 7 } } } } }
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: false }, scales: { x: { display: true, ticks: { color: '#666', font: { size: 8 } }, grid: { color: 'rgba(255,255,255,0.05)' } }, y: { ticks: { color: '#666', font: { size: 7 } }, grid: { color: 'rgba(255,255,255,0.05)' } } } }
         });
     }
     triggerMapPulse(country.latlng, 'var(--accent-cyan)');
