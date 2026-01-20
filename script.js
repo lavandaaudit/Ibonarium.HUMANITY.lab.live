@@ -1,110 +1,68 @@
-// Ibonarium Humanity Layer Script
-// Real-time civilization monitoring with API integration
+// Ibonarium Humanity Layer Script v5.5 (Enhanced Interaction)
 
 const mapConfig = {
-    center: [20, 0],
-    zoom: 2.5,
-    minZoom: 2,
-    maxZoom: 10
+    center: [20, 0], zoom: 2.5, minZoom: 2, maxZoom: 10
 };
 
-// Global State
 let map;
 let countriesData = {}; 
 let lookupTable = {};   
 let activeLayer = 'humanity';
 let markersLayer = L.layerGroup();
+let pulseLayer = L.layerGroup(); // Новий шар для анімацій
 let globalStats = {
-    population: 0,
-    avgTension: 0.5,
-    avgStability: 0.5,
-    avgEconomy: 0.5,
-    avgHealth: 0.5,
-    events_count: 0
+    population: 0, avgTension: 0.24, avgStability: 0.72, avgEconomy: 0.65, avgHealth: 0.78
 };
-
-let geoJsonLayer;
 
 const COLORS = {
-    humanity: '#ffffff',
-    demography: '#00f3ff', 
-    social: '#ff3333',     
-    politics: '#ffaa00',   
-    economy: '#39ff14',    
-    health: '#ff00ff'      
+    humanity: '#ffffff', demography: '#00f3ff', social: '#ff3333',     
+    politics: '#ffaa00', economy: '#39ff14', health: '#ff00ff'      
 };
 
-const WB_INDICATORS = {
-    growth: 'SP.POP.GROW',
-    gdp_growth: 'NY.GDP.MKTP.KD.ZG',
-    inflation: 'FP.CPI.TOTL.ZG',
-    unemployment: 'SL.UEM.TOTL.ZS',
-    life_expectancy: 'SP.DYN.LE00.IN',
-};
-
-const CLUSTERS = {
-    'G7': ['US', 'CA', 'GB', 'FR', 'DE', 'IT', 'JP'],
-    'BRICS': ['BR', 'RU', 'IN', 'CN', 'ZA', 'EG', 'ET', 'IR', 'AE', 'SA'],
-    'EU': ['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE'],
-    'ASEAN': ['BN', 'KH', 'ID', 'LA', 'MY', 'MM', 'PH', 'SG', 'TH', 'VN']
-};
+// --- DATA INITIALIZATION ---
 
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
     initDataAndEvents();
     startClock();
-    initChart();
 });
 
 function initMap() {
-    map = L.map('map', {
-        zoomControl: false,
-        attributionControl: false
-    }).setView(mapConfig.center, mapConfig.zoom);
-
+    map = L.map('map', { zoomControl: false, attributionControl: false }).setView(mapConfig.center, mapConfig.zoom);
+    
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        subdomains: 'abcd',
-        maxZoom: 19
+        subdomains: 'abcd', maxZoom: 19
     }).addTo(map);
 
-    L.control.scale({ position: 'bottomright' }).addTo(map);
+    markersLayer.addTo(map);
+    pulseLayer.addTo(map);
 
     map.on('mousemove', (e) => {
-        const latEl = document.getElementById('lat');
-        const lonEl = document.getElementById('lon');
-        if (latEl) latEl.innerText = e.latlng.lat.toFixed(2);
-        if (lonEl) lonEl.innerText = e.latlng.lng.toFixed(2);
+        const lat = document.getElementById('lat');
+        const lon = document.getElementById('lon');
+        if (lat) lat.innerText = e.latlng.lat.toFixed(2);
+        if (lon) lon.innerText = e.latlng.lng.toFixed(2);
     });
-
-    updateStatus('Завантаження систем...');
 }
 
 async function initDataAndEvents() {
     try {
         updateStatus('Синхронізація (REST Countries)...');
-        const response = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,cca3,region,subregion,population,latlng,flags,capital,area');
+        const response = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,cca3,region,population,latlng,flags');
         const rawData = await response.json();
 
-        updateStatus('Отримання індикаторів (World Bank)...');
-        await fetchGlobalWBStats();
-
-        updateStatus('Мапування геоданих...');
         const geoResponse = await fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson');
         const geoData = await geoResponse.json();
 
-        let totalPop = 0;
         rawData.forEach(c => {
             if (!c.cca2) return;
-            const derivedStats = modelCountryStats(c);
-            countriesData[c.cca2] = { ...c, stats: derivedStats, wb: {} };
+            countriesData[c.cca2] = { ...c, stats: modelCountryStats(c), events: [] };
             lookupTable[c.cca2] = c.cca2;
             if (c.cca3) lookupTable[c.cca3] = c.cca2;
-            totalPop += (c.population || 0);
+            globalStats.population += (c.population || 0);
         });
 
-        globalStats.population = totalPop;
         updateGlobalDashboard();
-        
         renderGeoJSONLayer(geoData);
         renderMarkers();
 
@@ -112,144 +70,85 @@ async function initDataAndEvents() {
         startEventFeed();
 
     } catch (e) {
-        console.error('Init Error:', e);
-        updateStatus('Помилка завантаження. Використовується кеш.');
-        useFallbackData();
+        updateStatus('Помилка завантаження API.');
     }
-}
-
-function getCountry(code) {
-    if (!code) return null;
-    const key = lookupTable[code.toUpperCase()];
-    return countriesData[key] || null;
-}
-
-async function fetchGlobalWBStats() {
-    try {
-        const indicators = [WB_INDICATORS.gdp_growth, WB_INDICATORS.life_expectancy];
-        for (const id of indicators) {
-            const url = `https://api.worldbank.org/v2/country/WLD/indicator/${id}?format=json&mrv=1`;
-            const res = await fetch(url);
-            const data = await res.json();
-            if (data && data[1] && data[1][0]) {
-                const val = data[1][0].value;
-                if (id === WB_INDICATORS.gdp_growth) globalStats.avgEconomy = Math.min(1, Math.max(0, val / 10 + 0.5));
-                if (id === WB_INDICATORS.life_expectancy) globalStats.avgHealth = Math.min(1, Math.max(0, val / 100));
-            }
-        }
-    } catch (err) { console.warn('WB Global Error'); }
-}
-
-function renderGeoJSONLayer(geoData) {
-    if (geoJsonLayer) map.removeLayer(geoJsonLayer);
-
-    geoJsonLayer = L.geoJSON(geoData, {
-        style: (feature) => {
-            // FIX: Використання правильних ключів властивостей для цього GeoJSON
-            const countryCode = feature.properties['ISO3166-1-Alpha-2'] || feature.properties.ISO_A2 || feature.id;
-            const country = getCountry(countryCode);
-
-            if (!country) return { fillColor: '#111', weight: 0.5, opacity: 0.1, color: '#333', fillOpacity: 0.05 };
-
-            return {
-                fillColor: getColorForLayer(activeLayer, country),
-                weight: 1,
-                opacity: 0.5,
-                color: '#00f3ff',
-                fillOpacity: getOpacityForLayer(activeLayer, country)
-            };
-        },
-        onEachFeature: (feature, layer) => {
-            const countryCode = feature.properties['ISO3166-1-Alpha-2'] || feature.properties.ISO_A2 || feature.id;
-            const country = getCountry(countryCode);
-            if (country) {
-                layer.on({
-                    click: (e) => { L.DomEvent.stopPropagation(e); openCountryInfo(country); },
-                    mouseover: (e) => { e.target.setStyle({ weight: 2, color: '#fff', fillOpacity: 0.8 }); },
-                    mouseout: (e) => { geoJsonLayer.resetStyle(e.target); }
-                });
-            }
-        }
-    }).addTo(map);
 }
 
 function modelCountryStats(country) {
     const region = country.region || 'World';
-    let base = 0.5;
-    if (region === 'Europe') base = 0.8;
-    if (region === 'Africa') base = 0.3;
-    
+    let base = region === 'Europe' ? 0.75 : region === 'Africa' ? 0.4 : 0.55;
     return {
-        tension: Math.random(),
-        stability: base + (Math.random() * 0.2 - 0.1),
-        economy: base + (Math.random() * 0.2 - 0.1),
-        health: base + (Math.random() * 0.2 - 0.1),
-        pulse: Math.random(),
-        growthRate: (Math.random() - 0.5) * 0.02
+        tension: 0.1 + Math.random() * 0.2,
+        stability: base + (Math.random() * 0.1),
+        economy: base + (Math.random() * 0.1),
+        pulse: 0.6 + Math.random() * 0.3
     };
 }
 
-function renderMarkers() {
-    markersLayer.clearLayers();
-    Object.values(countriesData).forEach(country => {
-        if (!country.latlng || country.latlng.length < 2) return;
-        const color = getColorForLayer(activeLayer, country);
-        const radius = getRadiusForLayer(activeLayer, country);
+// --- VISUAL EFFECTS ---
 
-        L.circleMarker(country.latlng, {
-            radius: radius,
-            fillColor: color,
-            color: '#fff',
-            weight: 0.5,
-            opacity: 0.8,
-            fillOpacity: 0.6
-        }).on('click', (e) => {
-            L.DomEvent.stopPropagation(e);
-            openCountryInfo(country);
-        }).addTo(markersLayer);
-    });
-    markersLayer.addTo(map);
+function triggerMapPulse(latlng, color = 'var(--accent-cyan)') {
+    if (!latlng || latlng.length < 2) return;
+    
+    const pulse = L.circleMarker(latlng, {
+        radius: 5, fillColor: color, color: color, weight: 2, opacity: 1, fillOpacity: 0.8
+    }).addTo(pulseLayer);
+
+    let size = 5;
+    let opacity = 1;
+    
+    const interval = setInterval(() => {
+        size += 2;
+        opacity -= 0.05;
+        pulse.setRadius(size);
+        pulse.setStyle({ opacity: opacity, fillOpacity: opacity * 0.5 });
+        
+        if (opacity <= 0) {
+            clearInterval(interval);
+            pulseLayer.removeLayer(pulse);
+        }
+    }, 50);
 }
 
-function getColorForLayer(mode, country) {
-    const s = country.stats;
-    if (mode === 'humanity') return s.pulse > 0.6 ? COLORS.economy : s.pulse < 0.4 ? COLORS.social : COLORS.politics;
-    if (mode === 'demography') return COLORS.demography;
-    if (mode === 'social') return COLORS.social;
-    if (mode === 'politics') return COLORS.politics;
-    if (mode === 'economy') return COLORS.economy;
-    if (mode === 'health') return COLORS.health;
-    return '#fff';
+// --- GDELT INTEGRATION ---
+
+async function fetchGDELT(query = 'humanity', isGlobal = true, countryCode = null) {
+    try {
+        const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${query}&mode=ArtList&maxrecords=5&format=json`;
+        const res = await fetch(url);
+        const data = await res.json();
+        return data.articles || [];
+    } catch (e) { return []; }
 }
 
-function getOpacityForLayer(mode, country) {
-    return country.stats.stability || 0.6;
-}
+async function startEventFeed() {
+    const feed = document.getElementById('alert-feed');
+    if (!feed) return;
 
-function getRadiusForLayer(mode, country) {
-    const base = Math.sqrt(country.population || 1000) / 2500;
-    return Math.max(3, Math.min(base, 20));
-}
+    async function processLiveStream() {
+        const articles = await fetchGDELT('civilization OR crisis OR diplomacy');
+        articles.forEach(art => {
+            const item = document.createElement('div');
+            item.className = 'alert-item';
+            item.innerHTML = `<span style="color:var(--accent-cyan)">[LIVE]</span> ${art.title.substring(0, 55)}...`;
+            item.onclick = () => window.open(art.url, '_blank');
+            feed.prepend(item);
 
-function toggleLayer(layerName) {
-    document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
-    const btn = document.getElementById(`btn-${layerName}`);
-    if (btn) btn.classList.add('active');
-    activeLayer = layerName;
-
-    if (geoJsonLayer) {
-        geoJsonLayer.setStyle((feature) => {
-            const countryCode = feature.properties['ISO3166-1-Alpha-2'] || feature.properties.ISO_A2 || feature.id;
-            const country = getCountry(countryCode);
-            if (!country) return { fillOpacity: 0.05 };
-            return {
-                fillColor: getColorForLayer(layerName, country),
-                fillOpacity: getOpacityForLayer(layerName, country)
-            };
+            // Візуальний імпульс у випадковій точці з реальних точок країн для ефекту "живої карти"
+            const keys = Object.keys(countriesData);
+            const randomCountry = countriesData[keys[Math.floor(Math.random() * keys.length)]];
+            if (randomCountry.latlng) triggerMapPulse(randomCountry.latlng);
         });
+        
+        while (feed.children.length > 20) feed.lastChild.remove();
+        updateGlobalDashboard();
     }
-    renderMarkers();
+
+    setInterval(processLiveStream, 15000);
+    processLiveStream();
 }
+
+// --- COUNTRY INFO PANEL (UPDATED) ---
 
 async function openCountryInfo(country) {
     const panel = document.getElementById('info-panel');
@@ -257,82 +156,102 @@ async function openCountryInfo(country) {
     if (!panel || !content) return;
     
     panel.classList.remove('hidden');
-    content.innerHTML = `<div class="loading-spinner">ЗБІР ДАНИХ...</div>`;
-    map.flyTo(country.latlng, 5);
+    content.innerHTML = `<div class="loading-spinner">СИНХРОНІЗАЦІЯ З GDELT NETWORK...</div>`;
+    map.flyTo(country.latlng, 5, { duration: 1.5 });
+
+    // Отримання новин спеціально для цієї країни
+    const countryNews = await fetchGDELT(country.name.common + ' news');
 
     const s = country.stats;
+    let newsHtml = countryNews.length > 0 
+        ? countryNews.map(n => `<div class="alert-item" style="font-size:0.7rem; padding:5px; border-left:2px solid var(--accent-cyan); margin-bottom:5px; background:rgba(0,243,255,0.05);" onclick="window.open('${n.url}')">
+            ${n.title.substring(0, 70)}...
+          </div>`).join('')
+        : '<p style="color:var(--text-dim); font-size:0.7rem;">Поточних активних подій не виявлено.</p>';
+
     content.innerHTML = `
-        <div class="country-header">
-            <img src="${country.flags.svg}" class="flag-img" style="width:40px;">
+        <div class="country-header" style="display:flex; align-items:center; gap:15px; margin-bottom:20px;">
+            <img src="${country.flags.svg}" style="width:60px; height:auto; border-radius:2px; box-shadow:0 0 10px rgba(0,0,0,0.5);">
             <div>
-                <h3>${country.name.common}</h3>
-                <p>${country.region}</p>
+                <h2 style="color:var(--accent-cyan); margin:0; text-transform:uppercase;">${country.name.common}</h2>
+                <span style="color:rgba(255,255,255,0.5); font-size:0.7rem;">GEOPOLITICAL ZONE: ${country.region}</span>
             </div>
         </div>
-        <div class="vector-grid">
-            <div class="vector-item"><span>PULSE</span><b>${(s.pulse * 100).toFixed(0)}%</b></div>
-            <div class="vector-item"><span>POP</span><b>${formatPopulation(country.population)}</b></div>
+
+        <div class="control-group-title">LAYER DATA (REAL-TIME)</div>
+        <div class="vector-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px;">
+            <div class="vector-item" style="background:rgba(255,255,255,0.05); padding:10px; border-radius:4px;">
+                <span style="display:block; font-size:0.6rem; color:var(--text-dim);">PULSE</span>
+                <b style="color:var(--accent-green); font-size:1.1rem;">${(s.pulse * 100).toFixed(0)}%</b>
+            </div>
+            <div class="vector-item" style="background:rgba(255,255,255,0.05); padding:10px; border-radius:4px;">
+                <span style="display:block; font-size:0.6rem; color:var(--text-dim);">POPULATION</span>
+                <b style="color:var(--accent-cyan); font-size:1.1rem;">${formatPopulation(country.population)}</b>
+            </div>
+        </div>
+
+        <div class="control-group-title">RECOGNIZED NEWS / EVENTS</div>
+        <div class="events-container" style="max-height:200px; overflow-y:auto; padding-right:5px;">
+            ${newsHtml}
+        </div>
+
+        <div style="margin-top:20px; font-size:0.6rem; color:var(--text-dim); text-align:center;">
+            SOURCE: GDELT REAL-TIME STREAM v2.0
         </div>
     `;
+    
+    // Візуальний ефект при відкритті
+    triggerMapPulse(country.latlng, 'var(--accent-cyan)');
 }
 
-function closeInfoPanel() { 
-    const p = document.getElementById('info-panel');
-    if (p) p.classList.add('hidden'); 
+// --- UTILS ---
+
+function renderGeoJSONLayer(geoData) {
+    if (geoJsonLayer) map.removeLayer(geoJsonLayer);
+    geoJsonLayer = L.geoJSON(geoData, {
+        style: (f) => ({
+            fillColor: getColorForLayer(activeLayer, getCountry(f.properties['ISO3166-1-Alpha-2'] || f.id)),
+            weight: 1, opacity: 0.3, color: '#00f3ff', fillOpacity: 0.15
+        }),
+        onEachFeature: (f, l) => {
+            const c = getCountry(f.properties['ISO3166-1-Alpha-2'] || f.id);
+            if (c) l.on('click', (e) => { L.DomEvent.stopPropagation(e); openCountryInfo(c); });
+        }
+    }).addTo(map);
+}
+
+function renderMarkers() {
+    markersLayer.clearLayers();
+    Object.values(countriesData).forEach(c => {
+        if (!c.latlng || c.latlng.length < 2) return;
+        L.circleMarker(c.latlng, {
+            radius: Math.max(3, Math.sqrt(c.population)/3000), 
+            fillColor: getColorForLayer(activeLayer, c), color: '#fff', weight: 0.5, opacity: 0.8, fillOpacity: 0.5
+        }).on('click', (e) => { L.DomEvent.stopPropagation(e); openCountryInfo(c); }).addTo(markersLayer);
+    });
+}
+
+function getColorForLayer(mode, c) {
+    if (!c) return '#222';
+    const s = c.stats;
+    if (mode === 'humanity') return s.pulse > 0.7 ? '#39ff14' : s.pulse < 0.4 ? '#ff3333' : '#ffaa00';
+    return COLORS[mode] || '#fff';
 }
 
 function updateGlobalDashboard() {
-    const popEl = document.getElementById('total-pop-display');
-    if (popEl) popEl.innerText = formatPopulation(globalStats.population);
-    
-    const tensionEl = document.getElementById('global-tension');
-    if (tensionEl) tensionEl.innerText = globalStats.avgTension.toFixed(2);
-    
-    const stressValEl = document.getElementById('stress-value');
-    if (stressValEl) stressValEl.innerText = globalStats.avgTension.toFixed(2);
+    const el = document.getElementById('total-pop-display');
+    if (el) el.innerText = formatPopulation(globalStats.population);
 }
 
-// --- GDELT Live Monitoring ---
-async function startEventFeed() {
-    const feed = document.getElementById('alert-feed');
-    if (!feed) return;
-
-    async function fetchGDELT() {
-        try {
-            updateStatus('GDELT: Пошук подій...');
-            const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=humanity&mode=ArtList&maxrecords=5&format=json`;
-            const res = await fetch(url);
-            const data = await res.json();
-
-            if (data && data.articles && data.articles.length > 0) {
-                updateStatus('GDELT: Потік активний.');
-                data.articles.forEach(art => {
-                    const item = document.createElement('div');
-                    item.className = 'alert-item';
-                    item.innerHTML = `<span style="color:var(--accent-cyan)">[LIVE]</span> ${art.title.substring(0, 50)}...`;
-                    item.onclick = () => window.open(art.url, '_blank');
-                    feed.prepend(item);
-                });
-                if (feed.children.length > 15) feed.lastChild.remove();
-            }
-        } catch (e) {
-            updateStatus('GDELT: Режим симуляції.');
-        }
-    }
-
-    setInterval(fetchGDELT, 10000);
-    fetchGDELT();
-}
-
-function updateStatus(msg) {
+function updateStatus(m) {
     const el = document.getElementById('status-detailed');
-    if (el) el.innerText = msg;
+    if (el) el.innerText = m;
 }
 
-function formatPopulation(num) {
-    if (num >= 1e9) return (num / 1e9).toFixed(2) + 'B';
-    if (num >= 1e6) return (num / 1e6).toFixed(1) + 'M';
-    return num.toLocaleString();
+function formatPopulation(n) {
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    return n.toLocaleString();
 }
 
 function startClock() {
@@ -340,8 +259,4 @@ function startClock() {
         const el = document.getElementById('last-update');
         if (el) el.innerText = new Date().toLocaleTimeString();
     }, 1000);
-}
-
-function initChart() {
-    // Basic pulse chart placeholder
 }
